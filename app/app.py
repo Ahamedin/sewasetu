@@ -71,10 +71,20 @@ def env_nonnegative_int(name, default):
     return parsed
 
 
+def env_positive_int(name, default):
+    parsed = env_nonnegative_int(name, default)
+    if parsed == 0:
+        raise RuntimeError("%s must be a positive integer" % name)
+    return parsed
+
+
 app = Flask(__name__)
 app.secret_key = os.environ["SEWASETU_FLASK_SECRET_KEY"]
 csrf = CSRFProtect(app)
-app.config["PERMANENT_SESSION_LIFETIME"] = 300
+app.config["PERMANENT_SESSION_LIFETIME"] = env_positive_int(
+    "SEWASETU_SESSION_LIFETIME_SECONDS", 1800
+)
+app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 app.config["SESSION_COOKIE_SECURE"] = env_bool(
     "SEWASETU_SESSION_COOKIE_SECURE", False
 )

@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import os
+import re
 import sys
 import tempfile
 import types
@@ -25,6 +26,7 @@ def load_app(upload_dir):
         "SEWASETU_SESSION_COOKIE_SAMESITE": "Lax",
         "SEWASETU_ALLOWED_HOSTS": "",
         "SEWASETU_TRUSTED_PROXY_COUNT": "0",
+        "SEWASETU_SESSION_LIFETIME_SECONDS": "1800",
     }
     requests_stub = types.ModuleType("requests")
     requests_stub.post = Mock()
@@ -48,7 +50,7 @@ def load_app(upload_dir):
             }):
         spec.loader.exec_module(module)
     module.UPLOAD_DIR = upload_dir
-    module.app.config["WTF_CSRF_ENABLED"] = False
+    module.app.config["TESTING"] = True
     return module
 
 
@@ -64,10 +66,17 @@ class UploadTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def upload(self, name, content, content_type):
+        response = self.client.get(
+            "/upload", headers={"Host": "localhost"}
+        )
+        token = re.search(
+            rb'name="csrf_token" value="([^"]+)"', response.data
+        ).group(1).decode("ascii")
         return self.client.post(
             "/upload",
             data={
                 "document": (io.BytesIO(content), name, content_type),
+                "csrf_token": token,
             },
             headers={"Host": "localhost"},
         )
@@ -102,13 +111,40 @@ class UploadTests(unittest.TestCase):
         self.assertIn(b"Document size must not exceed 5 MB.", response.data)
 
     def test_missing_file_is_rejected_clearly(self):
+        page = self.client.get("/upload", headers={"Host": "localhost"})
+        token = re.search(
+            rb'name="csrf_token" value="([^"]+)"', page.data
+        ).group(1).decode("ascii")
         response = self.client.post(
             "/upload",
-            data={},
+            data={"csrf_token": token},
             headers={"Host": "localhost"},
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Please select an age-proof document.", response.data)
+
+    def test_missing_csrf_token_is_rejected(self):
+        response = self.client.post(
+            "/upload",
+            data={
+                "document": (io.BytesIO(b"%PDF-1.7 test"), "birth.pdf",
+                             "application/pdf"),
+            },
+            headers={"Host": "localhost"},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_invalid_csrf_token_is_rejected(self):
+        response = self.client.post(
+            "/upload",
+            data={
+                "csrf_token": "invalid",
+                "document": (io.BytesIO(b"%PDF-1.7 test"), "birth.pdf",
+                             "application/pdf"),
+            },
+            headers={"Host": "localhost"},
+        )
+        self.assertEqual(response.status_code, 400)
 
     def test_mismatched_content_is_rejected(self):
         response = self.upload("birth.pdf", b"not a pdf", "application/pdf")
