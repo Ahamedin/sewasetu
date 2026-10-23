@@ -552,6 +552,16 @@ def application_validation_redirect(reason, step):
     return redirect(url_for("form_step", step=step))
 
 
+def parse_date_of_birth(value):
+    value = (value or "").strip()
+    for fmt in ("%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 @app.route("/verify", methods=["GET", "POST"])
 def verify():
     mobile = session.get("apply_mobile")
@@ -668,6 +678,14 @@ def handle_submission():
     data = session.get("form_data", {})
     doc_path = session.get("doc_path", "")
 
+    if not mobile:
+        app.logger.info(
+            "application submission rejected stage=final_submission "
+            "reason=missing_verified_session"
+        )
+        flash("Session expired. Please verify your mobile number again.")
+        return redirect(url_for("apply"))
+
     name = sanitize(data.get("applicant_name", ""))
     village = data.get("village", "").strip()
     block = data.get("block", "").strip()
@@ -680,25 +698,33 @@ def handle_submission():
     ifsc = data.get("ifsc", "").strip().upper()
     dob_raw = data.get("dob", "").strip()
 
-    if not name or not dob_raw:
-        return application_validation_redirect("missing_personal_field", 1)
+    if not name:
+        return application_validation_redirect("missing_applicant_name", 1)
+    if not dob_raw:
+        return application_validation_redirect("missing_date_of_birth", 1)
+    if not gender:
+        return application_validation_redirect("missing_gender", 1)
+    if not marital:
+        return application_validation_redirect("missing_marital_status", 1)
     if not village or not block:
         return application_validation_redirect("missing_address_field", 2)
     if not bank_account:
         return application_validation_redirect("missing_bank_account", 3)
+    if not doc_path:
+        app.logger.info(
+            "application validation failed stage=final_submission "
+            "reason=missing_document step=5"
+        )
+        flash("Please upload an age-proof document before submitting.")
+        return redirect(url_for("upload"))
 
     if husband_fields_required(gender, marital):
         if not husband_name or not husband_employer:
             return application_validation_redirect("missing_husband_field", 1)
 
-    # lenient date parsing to reduce rejections (CR-2024-117)
-    dob = None
-    for fmt in ("%m/%d/%Y", "%d/%m/%Y"):
-        try:
-            dob = datetime.strptime(dob_raw, fmt).date()
-            break
-        except ValueError:
-            continue
+    # Prefer the form's documented DD/MM/YYYY format while retaining
+    # compatibility with previously accepted MM/DD/YYYY input.
+    dob = parse_date_of_birth(dob_raw)
     if dob is None:
         return application_validation_redirect("invalid_date_of_birth", 1)
 
@@ -719,35 +745,54 @@ def handle_submission():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("SELECT count(*) FROM applications WHERE mobile = %s", (mobile,))
-    if cur.fetchone()[0] > 0:
-        cur.close(); conn.close()
-        flash("An application already exists for this mobile number. "
-              "Duplicate applications are not permitted.")
-        return redirect(url_for("index"))
+    try:
+        cur.execute(
+            "SELECT count(*) FROM applications WHERE mobile = %s",
+            (mobile,),
+        )
+        if cur.fetchone()[0] > 0:
+            cur.close(); conn.close()
+            flash("An application already exists for this mobile number. "
+                  "Duplicate applications are not permitted.")
+            return redirect(url_for("index"))
 
-    app_no = new_application_no()
-    cur.execute(
-        """INSERT INTO applications
-           (application_no, applicant_name, mobile, dob, gender, marital_status,
-            husband_name, husband_employer, village, block, bank_account, ifsc,
-            doc_path, status, submitted_at)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
-           RETURNING id""",
-        (app_no, name, mobile, dob, gender, marital, husband_name,
-         husband_employer, village, block, bank_account, ifsc, doc_path,
-         datetime.now()))
-    new_id = cur.fetchone()[0]
+        app_no = new_application_no()
+        cur.execute(
+            """INSERT INTO applications
+               (application_no, applicant_name, mobile, gender, marital_status,
+                husband_name, husband_employer, village, block, bank_account,
+                ifsc, doc_path, status, submitted_at, dob)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s,%s)
+               RETURNING id""",
+            (app_no, name, mobile, gender, marital, husband_name,
+             husband_employer, village, block, bank_account, ifsc, doc_path,
+             datetime.now(), dob))
+        new_id = cur.fetchone()[0]
 
-    portal_pass = secrets.token_urlsafe(18)
-    cur.execute("SELECT count(*) FROM portal_users WHERE mobile = %s", (mobile,))
-    if cur.fetchone()[0] == 0:
-        cur.execute("INSERT INTO portal_users (mobile, password_hash) VALUES (%s,%s)",
-                   (mobile, hash_temporary_password(
-                       portal_pass,
-                       datetime.now() + timedelta(hours=24),
-                   )))
-    conn.commit()
+        portal_pass = secrets.token_urlsafe(18)
+        cur.execute(
+            "SELECT count(*) FROM portal_users WHERE mobile = %s",
+            (mobile,),
+        )
+        if cur.fetchone()[0] == 0:
+            cur.execute(
+                "INSERT INTO portal_users (mobile, password_hash) "
+                "VALUES (%s,%s)",
+                (mobile, hash_temporary_password(
+                    portal_pass,
+                    datetime.now() + timedelta(hours=24),
+                )),
+            )
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        app.logger.error(
+            "application submission database failure type=%s",
+            type(exc).__name__,
+        )
+        cur.close()
+        conn.close()
+        raise
 
     app.logger.info("generating acknowledgment pdf application=%d" % new_id)
     pdf_bytes = generate_acknowledgment(cur, new_id)

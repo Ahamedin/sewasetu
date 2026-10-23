@@ -1,10 +1,26 @@
 import importlib.util
+import ast
 import os
+import pkgutil
 import sys
 import types
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
+from jinja2 import FileSystemLoader
+
+
+if not hasattr(pkgutil, "get_loader"):
+    pkgutil.get_loader = lambda name: importlib.util.find_spec(name)
+class LegacyStr(ast.Constant):
+    def __init__(self, value="", s=None):
+        if s is not None:
+            value = s
+        super().__init__(value=value)
+        self.s = value
+
+
+ast.Str = LegacyStr
 
 
 APP_PATH = Path(__file__).with_name("app.py")
@@ -47,6 +63,9 @@ def load_app():
             }):
         spec.loader.exec_module(module)
     module.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    module.app.jinja_loader = FileSystemLoader(
+        str(APP_PATH.parent / "templates")
+    )
     return module
 
 
@@ -93,6 +112,40 @@ class ApplicationFlowTests(unittest.TestCase):
         self.assertTrue(response.location.endswith("/form/1"))
         get_db.assert_not_called()
 
+    def test_valid_dd_mm_yyyy_date_reaches_submission(self):
+        self.assertEqual(
+            self.module.parse_date_of_birth("23/10/1950").strftime("%d/%m/%Y"),
+            "23/10/1950",
+        )
+
+    def test_each_missing_personal_field_returns_to_step_one(self):
+        cases = (
+            ("applicant_name", "missing_applicant_name"),
+            ("dob", "missing_date_of_birth"),
+            ("gender", "missing_gender"),
+            ("marital_status", "missing_marital_status"),
+        )
+        for field, reason in cases:
+            with self.subTest(field=field):
+                with self.client.session_transaction() as session:
+                    data = {
+                        "applicant_name": "Test Applicant",
+                        "dob": "01/01/1950",
+                        "gender": "Male",
+                        "marital_status": "Unmarried",
+                        "village": "Test Village",
+                        "block": "Sonari",
+                        "bank_account": "123456",
+                        "ifsc": "TEST0001",
+                    }
+                    data["bank_account"] = "123456"
+                    data[field] = ""
+                    session["form_data"] = data
+                with patch.object(self.module.app.logger, "info") as log:
+                    response = self.client.post("/declaration")
+                self.assertTrue(response.location.endswith("/form/1"))
+                self.assertIn(reason, str(log.call_args))
+
     def test_database_failure_is_not_disguised_as_step_redirect(self):
         with self.client.session_transaction() as session:
             data = dict(session["form_data"])
@@ -103,6 +156,110 @@ class ApplicationFlowTests(unittest.TestCase):
         ):
             with self.assertRaises(RuntimeError):
                 self.client.post("/declaration")
+
+    def test_database_insert_failure_rolls_back_and_is_not_redirected(self):
+        with self.client.session_transaction() as session:
+            data = dict(session["form_data"])
+            data["bank_account"] = "123456"
+            session["form_data"] = data
+
+        class Cursor:
+            def execute(self, statement, params=()):
+                if "SELECT count(*) FROM applications" in statement:
+                    raise RuntimeError("insert failure")
+
+            def close(self):
+                pass
+
+        class Connection:
+            def __init__(self):
+                self.rollback_count = 0
+                self.cursor_instance = Cursor()
+
+            def cursor(self):
+                return self.cursor_instance
+
+            def rollback(self):
+                self.rollback_count += 1
+
+            def close(self):
+                pass
+
+        connection = Connection()
+        with patch.object(self.module, "get_db", return_value=connection):
+            with self.assertRaises(RuntimeError):
+                self.client.post("/declaration")
+        self.assertEqual(connection.rollback_count, 1)
+
+    def test_complete_six_step_session_reaches_confirmation(self):
+        with self.client.session_transaction() as session:
+            session["form_data"] = {
+                "applicant_name": "Test Applicant",
+                "dob": "01/01/1950",
+                "gender": "Male",
+                "marital_status": "Unmarried",
+                "village": "Test Village",
+                "block": "Sonari",
+                "bank_account": "123456",
+                "ifsc": "TEST0001",
+            }
+            session["doc_path"] = "/tmp/test-document.pdf"
+
+        class Cursor:
+            def __init__(self):
+                self.statement = ""
+
+            def execute(self, statement, params=()):
+                self.statement = statement
+
+            def fetchone(self):
+                if "SELECT count(*) FROM applications" in self.statement:
+                    return (0,)
+                if "RETURNING id" in self.statement:
+                    return (101,)
+                if "SELECT count(*) FROM portal_users" in self.statement:
+                    return (1,)
+                return None
+
+            def close(self):
+                pass
+
+        class Connection:
+            def __init__(self):
+                self.cursor_instance = Cursor()
+                self.commit_count = 0
+
+            def cursor(self):
+                return self.cursor_instance
+
+            def commit(self):
+                self.commit_count += 1
+
+            def close(self):
+                pass
+
+        connection = Connection()
+        with patch.object(self.module, "get_db", return_value=connection), \
+                patch.object(
+                    self.module, "generate_acknowledgment",
+                    return_value=b"acknowledgment",
+                ), \
+                patch.object(self.module, "send_sms"):
+            response = self.client.post("/declaration")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Application Submitted", response.data)
+        self.assertEqual(connection.commit_count, 1)
+
+    def test_missing_document_returns_to_upload_step(self):
+        with self.client.session_transaction() as session:
+            data = dict(session["form_data"])
+            data["bank_account"] = "123456"
+            session["form_data"] = data
+            session["doc_path"] = ""
+        response = self.client.post("/declaration")
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.location.endswith("/upload"))
 
 
 if __name__ == "__main__":
