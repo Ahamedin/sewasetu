@@ -128,6 +128,7 @@ SMS_GATEWAY_URL = os.environ.get(
 ).rstrip("/")
 OTP_VALIDITY_SECONDS = config.getint("app", "otp_validity_seconds")
 UPLOAD_DIR = config.get("app", "upload_dir")
+MAX_DOCUMENT_SIZE = 5 * 1024 * 1024
 SCHEME_DEADLINE = datetime.strptime(config.get("pension", "scheme_deadline"),
                                     "%Y-%m-%d %H:%M")
 MIN_AGE = config.getint("pension", "min_age")
@@ -162,6 +163,35 @@ def sanitize(value, maxlen=100):
     if value is None:
         return ""
     return value.strip()[:maxlen]
+
+
+def validate_document_upload(upload):
+    filename = (upload.filename or "").strip()
+    if not filename:
+        return None, None, "Please select an age-proof document."
+
+    extension = os.path.splitext(filename)[1].lower()
+    expected_types = {
+        ".pdf": ("application/pdf", b"%PDF-"),
+        ".jpg": ("image/jpeg", b"\xff\xd8\xff"),
+        ".jpeg": ("image/jpeg", b"\xff\xd8\xff"),
+    }
+    expected = expected_types.get(extension)
+    if expected is None:
+        return None, None, "Only JPG and PDF files are accepted."
+
+    content = upload.read(MAX_DOCUMENT_SIZE + 1)
+    if len(content) > MAX_DOCUMENT_SIZE:
+        return None, None, "Document size must not exceed 5 MB."
+
+    expected_mimetype, signature = expected
+    declared_mimetype = (upload.mimetype or "").lower()
+    if declared_mimetype and declared_mimetype != expected_mimetype:
+        return None, None, "The document file type is invalid."
+    if not content.startswith(signature):
+        return None, None, "The document content does not match its file type."
+
+    return content, extension, None
 
 
 def redact_mobile(mobile):
@@ -552,21 +582,40 @@ def upload():
         return redirect(url_for("apply"))
     if request.method == "POST":
         f = request.files.get("document")
-        if f is None or f.filename == "":
-            flash("ERR_VAL_47")
+        if f is None:
+            flash("Please select an age-proof document.")
             return render_template("upload.html")
-        content = f.read()
-        if not f.filename.lower().endswith(".pdf"):
-            flash("ERR_VAL_47")
+        try:
+            content, extension, validation_error = validate_document_upload(f)
+        except (OSError, ValueError) as exc:
+            app.logger.warning(
+                "document upload validation failed type=%s",
+                type(exc).__name__,
+            )
+            flash("Unable to validate the document. Please try again.")
             return render_template("upload.html")
-        if len(content) > 102400:
-            flash("ERR_VAL_47")
+        if validation_error:
+            app.logger.info(
+                "document upload rejected reason=%s",
+                validation_error.split(".", 1)[0],
+            )
+            flash(validation_error)
             return render_template("upload.html")
-        document_dir = os.path.join(UPLOAD_DIR, "documents")
-        os.makedirs(document_dir, exist_ok=True)
-        path = os.path.join(document_dir, secrets.token_hex(16) + ".pdf")
-        with open(path, "wb") as out:
-            out.write(content)
+        try:
+            document_dir = os.path.join(UPLOAD_DIR, "documents")
+            os.makedirs(document_dir, exist_ok=True)
+            path = os.path.join(
+                document_dir, secrets.token_hex(16) + extension
+            )
+            with open(path, "wb") as out:
+                out.write(content)
+        except OSError as exc:
+            app.logger.warning(
+                "document upload storage failed type=%s",
+                type(exc).__name__,
+            )
+            flash("Unable to save the document. Please try again later.")
+            return render_template("upload.html")
         session["doc_path"] = path
         return redirect(url_for("declaration"))
     return render_template("upload.html")
