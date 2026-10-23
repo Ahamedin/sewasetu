@@ -398,9 +398,19 @@ def complete_password_reset(cur, mobile, code, new_password, now=None):
 
 
 def send_sms(mobile, text):
+    token = os.environ.get("SEWASETU_SMS_GATEWAY_TOKEN", "")
+    if not token:
+        app.logger.error("SMS gateway token is not configured")
+        return
+
     try:
-        requests.post(SMS_GATEWAY_URL + "/api/send",
-                      json={"to": mobile, "text": text}, timeout=5)
+        response = requests.post(
+            SMS_GATEWAY_URL + "/api/send",
+            json={"to": mobile, "text": text},
+            headers={"X-Gateway-Token": token},
+            timeout=5,
+        )
+        response.raise_for_status()
     except Exception as exc:
         app.logger.error(
             "sms gateway error type=%s mobile=%s",

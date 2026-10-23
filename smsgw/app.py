@@ -1,18 +1,19 @@
-"""PurvSMS - simulated state SMS gateway.
 
-Stands in for the telecom SMS provider. Messages sent via the API appear on the
-web console at / once "delivered", after a short carrier latency.
-"""
+"""PurvSMS - authenticated simulated SMS gateway."""
 
+import hmac
+import os
 import random
 import time
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, abort
 
 app = Flask(__name__)
 
-MESSAGES = []  # {id, to, text, sent_at, delivery_at}
+# Set this environment variable in Render. Never hardcode the token.
+GATEWAY_TOKEN = os.environ.get("SEWASETU_SMS_GATEWAY_TOKEN", "")
 
-# Carrier queue latency, seconds.
+MESSAGES = []
+
 DELAY_MIN = 1
 DELAY_MAX = 4
 
@@ -26,7 +27,7 @@ td,th{border:1px solid #ccc;padding:6px 10px;font-size:14px;text-align:left}
 .q{color:#b36b00}.d{color:#1b7e3c}
 </style></head><body>
 <h2>PurvSMS Gateway Console (simulation)</h2>
-<p>Messages appear below once the carrier delivers them. Auto-refreshes every 5s.</p>
+<p>Messages appear below once delivered. Auto-refreshes every 5s.</p>
 <table><tr><th>#</th><th>To</th><th>Message</th><th>Sent</th><th>Status</th></tr>
 {% for m in messages %}
 <tr><td>{{m.id}}</td><td>{{m.to}}</td>
@@ -39,18 +40,41 @@ td,th{border:1px solid #ccc;padding:6px 10px;font-size:14px;text-align:left}
 """
 
 
+def authorized():
+    supplied = request.headers.get("X-Gateway-Token", "")
+    return bool(GATEWAY_TOKEN) and hmac.compare_digest(
+        supplied, GATEWAY_TOKEN
+    )
+
+
+@app.before_request
+def require_gateway_token():
+    # Health checks don't need access to message data.
+    if request.path == "/healthz":
+        return None
+    if not authorized():
+        return jsonify({"error": "Unauthorized"}), 401
+
+
+@app.route("/healthz")
+def health():
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/send", methods=["POST"])
 def send():
-    data = request.get_json(force=True, silent=True) or request.form
-    to = data.get("to", "")
-    text = data.get("text", "")
-    if not to or not text:
+    data = request.get_json(silent=True) or request.form
+    to = str(data.get("to", "")).strip()
+    message_text = str(data.get("text", "")).strip()
+
+    if not to or not message_text:
         return jsonify({"status": "error", "reason": "to and text required"}), 400
+
     now = time.time()
     msg = {
         "id": len(MESSAGES) + 1,
         "to": to,
-        "text": text,
+        "text": message_text,
         "sent_at": now,
         "delivery_at": now + random.randint(DELAY_MIN, DELAY_MAX),
     }
@@ -60,19 +84,22 @@ def send():
 
 @app.route("/api/messages")
 def messages():
-    # Inbox query for a given number. Used to read delivered OTPs/SMS.
-    to = request.args.get("to", "")
+    to = request.args.get("to", "").strip()
     now = time.time()
     out = []
+
     for m in MESSAGES:
         if to and m["to"] != to:
             continue
         out.append({
-            "id": m["id"], "to": m["to"],
+            "id": m["id"],
+            "to": m["to"],
             "text": m["text"] if now >= m["delivery_at"] else None,
             "delivered": now >= m["delivery_at"],
-            "sent_at": m["sent_at"], "delivery_at": m["delivery_at"],
+            "sent_at": m["sent_at"],
+            "delivery_at": m["delivery_at"],
         })
+
     return jsonify({"messages": out})
 
 
@@ -80,15 +107,21 @@ def messages():
 def console():
     now = time.time()
     view = []
+
     for m in reversed(MESSAGES[-100:]):
         view.append({
-            "id": m["id"], "to": m["to"], "text": m["text"],
-            "sent_hhmm": time.strftime("%H:%M:%S", time.localtime(m["sent_at"])),
+            "id": m["id"],
+            "to": m["to"],
+            "text": m["text"],
+            "sent_hhmm": time.strftime(
+                "%H:%M:%S", time.localtime(m["sent_at"])
+            ),
             "delivered": now >= m["delivery_at"],
             "eta": max(0, int(m["delivery_at"] - now)),
         })
+
     return render_template_string(CONSOLE, messages=view)
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8025)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8025")))
