@@ -407,12 +407,15 @@ def send_sms(mobile, text):
         return
 
     try:
+        app.logger.info("SMS gateway URL configured: %s", SMS_GATEWAY_URL)
+
         response = requests.post(
             SMS_GATEWAY_URL + "/api/send",
             json={"to": mobile, "text": text},
             headers={"X-Gateway-Token": token},
-            timeout=5,
+            timeout=15,
         )
+        app.logger.info("SMS gateway HTTP status: %s", response.status_code)
         response.raise_for_status()
     except requests.exceptions.RequestException as exc:
         app.logger.error(
