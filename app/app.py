@@ -31,8 +31,21 @@ from fpdf import FPDF
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+
 config = configparser.ConfigParser()
 config.read(os.path.join(BASE_DIR, "config", "app.ini"))
+
+# Allow deployment environment variables to override local configuration.
+for option, env_name in (
+    ("host", "SEWASETU_DB_HOST"),
+    ("port", "SEWASETU_DB_PORT"),
+    ("name", "SEWASETU_DB_NAME"),
+    ("user", "SEWASETU_DB_USER"),
+):
+    value = os.environ.get(env_name)
+    if value:
+        config.set("database", option, value)
+
 
 
 def env_bool(name, default):
