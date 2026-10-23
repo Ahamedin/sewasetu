@@ -535,6 +535,16 @@ def normalize_husband_fields(data):
     return data
 
 
+def application_validation_redirect(reason, step):
+    app.logger.info(
+        "application validation failed stage=final_submission reason=%s step=%d",
+        reason,
+        step,
+    )
+    flash("Please review the information requested on this step.")
+    return redirect(url_for("form_step", step=step))
+
+
 @app.route("/verify", methods=["GET", "POST"])
 def verify():
     mobile = session.get("apply_mobile")
@@ -567,6 +577,10 @@ def verify():
 @app.route("/form/<int:step>", methods=["GET", "POST"])
 def form_step(step):
     if not session.get("verified_mobile"):
+        app.logger.info(
+            "workflow session unavailable route=form_step step=%d",
+            step,
+        )
         flash("Session expired. Please verify your mobile number again.")
         return redirect(url_for("apply"))
     if step not in (1, 2, 3):
@@ -659,14 +673,16 @@ def handle_submission():
     ifsc = data.get("ifsc", "").strip().upper()
     dob_raw = data.get("dob", "").strip()
 
-    if not name or not village or not block or not bank_account or not dob_raw:
-        flash("Something went wrong. Please try again.")
-        return redirect(url_for("form_step", step=1))
+    if not name or not dob_raw:
+        return application_validation_redirect("missing_personal_field", 1)
+    if not village or not block:
+        return application_validation_redirect("missing_address_field", 2)
+    if not bank_account:
+        return application_validation_redirect("missing_bank_account", 3)
 
     if gender == "Female" and marital == "Widowed":
         if not husband_name or not husband_employer:
-            flash("Something went wrong. Please try again.")
-            return redirect(url_for("form_step", step=1))
+            return application_validation_redirect("missing_husband_field", 1)
 
     # lenient date parsing to reduce rejections (CR-2024-117)
     dob = None
@@ -677,12 +693,15 @@ def handle_submission():
         except ValueError:
             continue
     if dob is None:
-        flash("Something went wrong. Please try again.")
-        return redirect(url_for("form_step", step=1))
+        return application_validation_redirect("invalid_date_of_birth", 1)
 
     today = date.today()
     age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
     if age < MIN_AGE:
+        app.logger.info(
+            "application validation failed stage=final_submission "
+            "reason=underage step=1"
+        )
         flash("Applicant must be above %d years of age to be eligible." % MIN_AGE)
         return redirect(url_for("form_step", step=1))
 
