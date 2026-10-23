@@ -122,7 +122,10 @@ def enforce_allowed_host():
 ADMIN_USERNAME = os.environ["SEWASETU_ADMIN_USERNAME"]
 ADMIN_PASSWORD_HASH = os.environ["SEWASETU_ADMIN_PASSWORD_HASH"]
 
-SMS_GATEWAY_URL = config.get("app", "sms_gateway_url")
+SMS_GATEWAY_URL = os.environ.get(
+    "SEWASETU_SMS_GATEWAY_URL",
+    config.get("app", "sms_gateway_url"),
+).rstrip("/")
 OTP_VALIDITY_SECONDS = config.getint("app", "otp_validity_seconds")
 UPLOAD_DIR = config.get("app", "upload_dir")
 SCHEME_DEADLINE = datetime.strptime(config.get("pension", "scheme_deadline"),
