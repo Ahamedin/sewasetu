@@ -527,9 +527,16 @@ def make_captcha():
     return "%d + %d" % (a, b)
 
 
+def husband_fields_required(gender, marital_status):
+    return (
+        gender == "Female" and
+        marital_status in ("Married", "Widowed")
+    )
+
+
 def normalize_husband_fields(data):
-    if (data.get("gender") != "Female" or
-            data.get("marital_status") != "Widowed"):
+    if not husband_fields_required(
+            data.get("gender"), data.get("marital_status")):
         data["husband_name"] = ""
         data["husband_employer"] = ""
     return data
@@ -680,7 +687,7 @@ def handle_submission():
     if not bank_account:
         return application_validation_redirect("missing_bank_account", 3)
 
-    if gender == "Female" and marital == "Widowed":
+    if husband_fields_required(gender, marital):
         if not husband_name or not husband_employer:
             return application_validation_redirect("missing_husband_field", 1)
 

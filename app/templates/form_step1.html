@@ -43,7 +43,8 @@
 
     function updateHusbandFields() {
       const applicable = gender.value === 'Female' &&
-                         maritalStatus.value === 'Widowed';
+                         (maritalStatus.value === 'Married' ||
+                          maritalStatus.value === 'Widowed');
       husbandFields.hidden = !applicable;
       husbandName.required = applicable;
       husbandEmployer.required = applicable;
