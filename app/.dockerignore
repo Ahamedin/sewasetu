@@ -1,0 +1,12 @@
+app.py.before-*
+app.py.pre-final-patch
+app.py.truncated-backup
+app_recovered.py
+scripts/deemed_approval.py.before-config-fix
+credential_security_test.py
+password_security_test.py
+*_test.py
+security_test_temp.py
+security_test_temp_original.py
+__pycache__/
+*.py[cod]

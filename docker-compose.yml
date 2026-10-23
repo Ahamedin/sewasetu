@@ -1,0 +1,98 @@
+services:
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sewasetu
+      POSTGRES_USER: sewasetu
+      POSTGRES_PASSWORD: ${SEWASETU_DB_PASSWORD:?SEWASETU_DB_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sewasetu -d sewasetu"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./app/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./seed/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql
+
+  app:
+    build: ./app
+    restart: unless-stopped
+    environment:
+      SEWASETU_DB_PASSWORD: ${SEWASETU_DB_PASSWORD:?SEWASETU_DB_PASSWORD is required}
+      SEWASETU_FLASK_SECRET_KEY: ${SEWASETU_FLASK_SECRET_KEY:?SEWASETU_FLASK_SECRET_KEY is required}
+      SEWASETU_ADMIN_USERNAME: ${SEWASETU_ADMIN_USERNAME:?SEWASETU_ADMIN_USERNAME is required}
+      SEWASETU_ADMIN_PASSWORD_HASH: ${SEWASETU_ADMIN_PASSWORD_HASH:?SEWASETU_ADMIN_PASSWORD_HASH is required}
+      SEWASETU_RESET_CODE_PEPPER: ${SEWASETU_RESET_CODE_PEPPER:?SEWASETU_RESET_CODE_PEPPER is required}
+      SEWASETU_REDIS_URL: ${SEWASETU_REDIS_URL:?SEWASETU_REDIS_URL is required}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      smsgw:
+        condition: service_healthy
+    stop_grace_period: 45s
+    volumes:
+      - uploads:/var/sewasetu/uploads
+      - applogs:/var/log/sewasetu
+
+  scheduler:
+    profiles: ["scheduler"]
+    build: ./app
+    environment:
+      SEWASETU_DB_PASSWORD: ${SEWASETU_DB_PASSWORD:?SEWASETU_DB_PASSWORD is required}
+    command: ["cron", "-f"]
+    depends_on:
+      - db
+    volumes:
+      - applogs:/var/log/sewasetu
+
+  smsgw:
+    build: ./smsgw
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8025/', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # Internal-only service; it has no host port and is reachable by the app
+    # over the Compose network.
+    expose:
+      - "8025"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    expose:
+      - "6379"
+
+volumes:
+  pgdata:
+  uploads:
+  applogs:

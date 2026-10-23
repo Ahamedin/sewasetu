@@ -1,0 +1,40 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+.sewasetu-*
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Runtime files
+*.log
+uploads/
+
+# Supplied production data and logs
+seed/seed.sql
+logs/*.tar.gz
+logs/*.gz
+logs/app-log-readable.txt
+sewasetu-before-recovery.dump
+
+# Legacy source backups and recovered copies
+app/app.py.before-*
+app/app.py.pre-final-patch
+app/app.py.truncated-backup
+app/app_recovered.py
+app/scripts/deemed_approval.py.before-config-fix
+
+# Local generated test artifacts
+app/security_test_temp.py
+app/security_test_temp_original.py
+assamese-test.pdf
+dc-briefing.mp3
+
+# OS files
+.DS_Store
+Thumbs.db

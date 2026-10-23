@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Reset Password</h2>
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label>Registered Mobile Number</label>
+  <input type="text" name="mobile" maxlength="10" required>
+  <label>Verification Code</label>
+  <input type="text" name="code" inputmode="numeric" maxlength="6">
+  <label>New Password</label>
+  <input type="password" name="new_password" minlength="12">
+  <p class="note">Request a code first. It expires after five minutes and can be used once.</p>
+  <p><button class="btn" type="submit">Request or Complete Reset</button></p>
+</form>
+{% endblock %}
