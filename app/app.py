@@ -414,10 +414,10 @@ def send_sms(mobile, text):
             timeout=5,
         )
         response.raise_for_status()
-    except Exception as exc:
+    except requests.exceptions.RequestException as exc:
         app.logger.error(
-            "sms gateway error type=%s mobile=%s",
-            type(exc).__name__,
+            "SMS gateway request failed: %s; mobile=%s",
+            str(exc)[:300],
             redact_mobile(mobile),
         )
 
