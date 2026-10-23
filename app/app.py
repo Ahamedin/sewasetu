@@ -487,6 +487,14 @@ def make_captcha():
     return "%d + %d" % (a, b)
 
 
+def normalize_husband_fields(data):
+    if (data.get("gender") != "Female" or
+            data.get("marital_status") != "Widowed"):
+        data["husband_name"] = ""
+        data["husband_employer"] = ""
+    return data
+
+
 @app.route("/verify", methods=["GET", "POST"])
 def verify():
     mobile = session.get("apply_mobile")
@@ -527,6 +535,8 @@ def form_step(step):
         data = session.get("form_data", {})
         for k, v in request.form.items():
             data[k] = v
+        if step == 1:
+            normalize_husband_fields(data)
         session["form_data"] = data
         if step < 3:
             return redirect(url_for("form_step", step=step + 1))
@@ -583,6 +593,7 @@ def handle_submission():
     block = data.get("block", "").strip()
     gender = data.get("gender", "")
     marital = data.get("marital_status", "")
+    normalize_husband_fields(data)
     husband_name = data.get("husband_name", "")
     husband_employer = data.get("husband_employer", "")
     bank_account = data.get("bank_account", "").strip()
@@ -593,7 +604,7 @@ def handle_submission():
         flash("Something went wrong. Please try again.")
         return redirect(url_for("form_step", step=1))
 
-    if marital == "Widowed":
+    if gender == "Female" and marital == "Widowed":
         if not husband_name or not husband_employer:
             flash("Something went wrong. Please try again.")
             return redirect(url_for("form_step", step=1))

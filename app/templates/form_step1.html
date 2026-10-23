@@ -22,11 +22,40 @@
     <option {% if data.get('marital_status')=='Unmarried' %}selected{% endif %}>Unmarried</option>
     <option {% if data.get('marital_status')=='Widowed' %}selected{% endif %}>Widowed</option>
   </select>
-  <label>Husband's Name</label>
-  <input type="text" name="husband_name" value="{{ data.get('husband_name','') }}">
-  <label>Husband's Current Employer</label>
-  <input type="text" name="husband_employer" value="{{ data.get('husband_employer','') }}">
+  <div id="husband-fields">
+    <label for="husband_name">Husband's Name</label>
+    <input id="husband_name" type="text" name="husband_name"
+           value="{{ data.get('husband_name','') }}">
+    <label for="husband_employer">Husband's Current Employer</label>
+    <input id="husband_employer" type="text" name="husband_employer"
+           value="{{ data.get('husband_employer','') }}">
+  </div>
   <p class="note">Fields marked above are mandatory as applicable.</p>
   <p><button class="btn" type="submit">Save &amp; Continue</button></p>
 </form>
+<script>
+  (function () {
+    const gender = document.querySelector('select[name="gender"]');
+    const maritalStatus = document.querySelector('select[name="marital_status"]');
+    const husbandFields = document.getElementById('husband-fields');
+    const husbandName = document.getElementById('husband_name');
+    const husbandEmployer = document.getElementById('husband_employer');
+
+    function updateHusbandFields() {
+      const applicable = gender.value === 'Female' &&
+                         maritalStatus.value === 'Widowed';
+      husbandFields.hidden = !applicable;
+      husbandName.required = applicable;
+      husbandEmployer.required = applicable;
+      if (!applicable) {
+        husbandName.value = '';
+        husbandEmployer.value = '';
+      }
+    }
+
+    gender.addEventListener('change', updateHusbandFields);
+    maritalStatus.addEventListener('change', updateHusbandFields);
+    updateHusbandFields();
+  }());
+</script>
 {% endblock %}
