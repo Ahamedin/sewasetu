@@ -47,13 +47,25 @@ def authorized():
     )
 
 
+
 @app.before_request
 def require_gateway_token():
-    # Health checks don't need access to message data.
+    # Public health check.
     if request.path == "/healthz":
         return None
+
+    # The browser console is protected by a separate demo key.
+    if request.path == "/":
+        demo_key = os.environ.get("SEWASETU_DEMO_CONSOLE_KEY", "")
+        supplied_key = request.args.get("key", "")
+        if demo_key and hmac.compare_digest(supplied_key, demo_key):
+            return None
+        return jsonify({"error": "Demo console access required"}), 401
+
+    # Keep API routes protected by the gateway token.
     if not authorized():
         return jsonify({"error": "Unauthorized"}), 401
+
 
 
 @app.route("/healthz")
