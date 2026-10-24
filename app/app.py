@@ -146,6 +146,10 @@ SLA_DAYS = config.getint("pension", "sla_days")
 DB_PASSWORD = os.environ["SEWASETU_DB_PASSWORD"]
 
 BLOCKS = ["Sonari", "Rajapara", "Dhemaji Pathar", "Borgaon", "Namti", "Khelua"]
+APPLICATION_SUMMARY_COLUMNS = (
+    "application_no, applicant_name, mobile, dob, village, block, "
+    "bank_account, ifsc, submitted_at, status, decided_at"
+)
 
 import logging
 _logdir = "/var/log/sewasetu"
@@ -853,14 +857,17 @@ def handle_submission():
         conn.close()
         raise
 
-    app.logger.info("generating acknowledgment pdf application=%d" % new_id)
-    pdf_bytes = generate_acknowledgment(cur, new_id)
-    ack_dir = os.path.join(UPLOAD_DIR, "ack")
-    os.makedirs(ack_dir, exist_ok=True)
-    with open(os.path.join(ack_dir, "%d.pdf" % new_id), "wb") as out:
-        out.write(pdf_bytes)
+    try:
+        app.logger.info("generating acknowledgment pdf application=%d" % new_id)
+        pdf_bytes = generate_acknowledgment(cur, new_id)
+        ack_dir = os.path.join(UPLOAD_DIR, "ack")
+        os.makedirs(ack_dir, exist_ok=True)
+        with open(os.path.join(ack_dir, "%d.pdf" % new_id), "wb") as out:
+            out.write(pdf_bytes)
+    finally:
+        cur.close()
+        conn.close()
 
-    cur.close(); conn.close()
     session.pop("form_data", None)
     session.pop("doc_path", None)
     session.pop("verified_mobile", None)
@@ -875,8 +882,8 @@ def handle_submission():
 
 def generate_acknowledgment(cur, app_id):
     cur.execute(
-        "SELECT application_no, applicant_name, mobile, dob, village, block, "
-        "bank_account, ifsc, submitted_at, status FROM applications WHERE id = %s",
+        "SELECT %s FROM applications WHERE id = %%s"
+        % APPLICATION_SUMMARY_COLUMNS,
         (app_id,)
     )
     row = cur.fetchone()
@@ -905,7 +912,8 @@ def generate_acknowledgment(cur, app_id):
 
     labels = [
         "Application No", "Applicant Name", "Mobile", "Date of Birth",
-        "Village", "Block", "Bank Account", "IFSC", "Submitted At", "Status"
+        "Village", "Block", "Bank Account", "IFSC", "Submitted At", "Status",
+        "Decided At",
     ]
 
     for label, value in zip(labels, row):
@@ -984,9 +992,8 @@ def view_application(app_id):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT application_no, applicant_name, mobile, dob, village, block, "
-                "bank_account, ifsc, status, submitted_at, decided_at "
-                "FROM applications WHERE id = %s",
+                "SELECT %s FROM applications WHERE id = %%s"
+                % APPLICATION_SUMMARY_COLUMNS,
                 (app_id,),
             )
             row = cur.fetchone()
@@ -1011,24 +1018,24 @@ def ack_pdf(app_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT mobile FROM applications WHERE id = %s", (app_id,))
+            cur.execute(
+                "SELECT mobile FROM applications WHERE id = %s",
+                (app_id,),
+            )
             row = cur.fetchone()
-    finally:
-        conn.close()
-
-    if not row:
-        abort(404)
-    if not session.get("admin") and row[0] != session.get("portal_mobile"):
-        abort(404)
-
-    pdf_path = os.path.join(UPLOAD_DIR, "ack", "%d.pdf" % app_id)
-    if os.path.exists(pdf_path):
-        return send_file(pdf_path, mimetype="application/pdf")
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
+            if not row:
+                abort(404)
+            if (not session.get("admin") and
+                    row[0] != session.get("portal_mobile")):
+                abort(404)
             data = generate_acknowledgment(cur, app_id)
+
+        pdf_path = os.path.join(UPLOAD_DIR, "ack", "%d.pdf" % app_id)
+        os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+        temporary_path = pdf_path + ".tmp"
+        with open(temporary_path, "wb") as out:
+            out.write(data)
+        os.replace(temporary_path, pdf_path)
         return send_file(io.BytesIO(data), mimetype="application/pdf")
     finally:
         conn.close()
