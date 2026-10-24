@@ -553,12 +553,17 @@ def application_validation_redirect(reason, step):
 
 
 def parse_date_of_birth(value):
-    value = (value or "").strip()
-    for fmt in ("%d/%m/%Y", "%m/%d/%Y"):
+    if not value:
+        return None
+
+    value = value.strip()
+
+    for date_format in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
         try:
-            return datetime.strptime(value, fmt).date()
+            return datetime.strptime(value, date_format).date()
         except ValueError:
             continue
+
     return None
 
 
@@ -570,6 +575,8 @@ def describe_date_input(value, parsed):
         shape = "dd_mm_yyyy"
     elif len(value) == 10 and value[2] == "-" and value[5] == "-":
         shape = "yyyy_mm_dd_or_other"
+    elif len(value) == 10 and value[4] == "-" and value[7] == "-":
+        shape = "yyyy_mm_dd"
     else:
         shape = "unexpected"
     return shape, "valid" if parsed is not None else "invalid"
