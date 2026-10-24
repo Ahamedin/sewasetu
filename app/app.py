@@ -1009,8 +1009,99 @@ def view_application(app_id):
     return render_template("application.html", a=row, app_id=app_id)
 
 
+
 @app.route("/ack/<int:app_id>.pdf")
 def ack_pdf(app_id):
+    # Require an authenticated portal user or administrator.
+    if not session.get("logged_in") and not session.get("admin"):
+        app.logger.warning(
+            "ACK PDF denied: app_id=%s reason=not_authenticated",
+            app_id,
+        )
+        abort(403)
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT mobile FROM applications WHERE id = %s",
+                (app_id,),
+            )
+            row = cur.fetchone()
+
+            # Diagnostic log: never log the applicant's mobile number.
+            app.logger.info(
+                "ACK PDF lookup: app_id=%s found=%s logged_in=%s admin=%s",
+                app_id,
+                row is not None,
+                bool(session.get("logged_in")),
+                bool(session.get("admin")),
+            )
+
+            if not row:
+                app.logger.warning(
+                    "ACK PDF not found: app_id=%s reason=missing_application",
+                    app_id,
+                )
+                abort(404)
+
+            # Verify that the logged-in user owns this application.
+            if not session.get("admin"):
+                portal_mobile = session.get("portal_mobile")
+
+                app.logger.info(
+                    "ACK PDF ownership check: app_id=%s "
+                    "portal_mobile_present=%s",
+                    app_id,
+                    bool(portal_mobile),
+                )
+
+                if not portal_mobile or row[0] != portal_mobile:
+                    app.logger.warning(
+                        "ACK PDF denied: app_id=%s "
+                        "reason=ownership_mismatch",
+                        app_id,
+                    )
+                    abort(404)
+
+            # Generate a fresh PDF using current database values.
+            data = generate_acknowledgment(cur, app_id)
+
+        # Refresh the disk cache atomically.
+        pdf_path = os.path.join(UPLOAD_DIR, "ack", "%d.pdf" % app_id)
+        os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+
+        temporary_path = pdf_path + ".tmp"
+        try:
+            with open(temporary_path, "wb") as out:
+                out.write(data)
+            os.replace(temporary_path, pdf_path)
+        finally:
+            if os.path.exists(temporary_path):
+                os.remove(temporary_path)
+
+        app.logger.info(
+            "ACK PDF generated successfully: app_id=%s",
+            app_id,
+        )
+
+        return send_file(
+            io.BytesIO(data),
+            mimetype="application/pdf",
+            as_attachment=False,
+            download_name="acknowledgment_%s.pdf" % app_id,
+        )
+
+    except Exception:
+        app.logger.exception(
+            "ACK PDF generation failed: app_id=%s",
+            app_id,
+        )
+        raise
+
+    finally:
+        conn.close()
+
     if not session.get("logged_in") and not session.get("admin"):
         abort(403)
 
