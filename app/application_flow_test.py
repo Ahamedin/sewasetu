@@ -146,6 +146,33 @@ class ApplicationFlowTests(unittest.TestCase):
                 self.assertTrue(response.location.endswith("/form/1"))
                 self.assertIn(reason, str(log.call_args))
 
+    def test_female_married_missing_husband_fields_is_the_step_one_reason(self):
+        with self.client.session_transaction() as session:
+            session["form_data"] = {
+                "applicant_name": "Test Applicant",
+                "dob": "23/10/1950",
+                "gender": "Female",
+                "marital_status": "Married",
+                "husband_name": "",
+                "husband_employer": "",
+                "village": "Test Village",
+                "block": "Sonari",
+                "bank_account": "123456",
+                "ifsc": "TEST0001",
+            }
+        with patch.object(self.module.app.logger, "info") as log:
+            response = self.client.post("/declaration")
+        self.assertTrue(response.location.endswith("/form/1"))
+        calls = [call.args for call in log.call_args_list]
+        self.assertTrue(any(
+            "husband_required=%s" in args[0] and True in args[1:]
+            for args in calls
+        ))
+        self.assertTrue(any(
+            "reason=%s" in args[0] and "missing_husband_field" in args[1:]
+            for args in calls
+        ))
+
     def test_database_failure_is_not_disguised_as_step_redirect(self):
         with self.client.session_transaction() as session:
             data = dict(session["form_data"])

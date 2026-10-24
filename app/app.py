@@ -562,6 +562,19 @@ def parse_date_of_birth(value):
     return None
 
 
+def describe_date_input(value, parsed):
+    value = (value or "").strip()
+    if not value:
+        shape = "empty"
+    elif len(value) == 10 and value[2] == "/" and value[5] == "/":
+        shape = "dd_mm_yyyy"
+    elif len(value) == 10 and value[2] == "-" and value[5] == "-":
+        shape = "yyyy_mm_dd_or_other"
+    else:
+        shape = "unexpected"
+    return shape, "valid" if parsed is not None else "invalid"
+
+
 @app.route("/verify", methods=["GET", "POST"])
 def verify():
     mobile = session.get("apply_mobile")
@@ -697,6 +710,26 @@ def handle_submission():
     bank_account = data.get("bank_account", "").strip()
     ifsc = data.get("ifsc", "").strip().upper()
     dob_raw = data.get("dob", "").strip()
+    dob = parse_date_of_birth(dob_raw)
+    dob_shape, dob_result = describe_date_input(dob_raw, dob)
+    app.logger.info(
+        "application submission input summary stage=final_submission "
+        "name_present=%s dob_shape=%s dob_result=%s gender_present=%s "
+        "marital_present=%s address_present=%s bank_present=%s "
+        "document_present=%s husband_required=%s husband_name_present=%s "
+        "husband_employer_present=%s",
+        bool(name),
+        dob_shape,
+        dob_result,
+        bool(gender),
+        bool(marital),
+        bool(village and block),
+        bool(bank_account),
+        bool(doc_path),
+        husband_fields_required(gender, marital),
+        bool(husband_name),
+        bool(husband_employer),
+    )
 
     if not name:
         return application_validation_redirect("missing_applicant_name", 1)
@@ -722,9 +755,6 @@ def handle_submission():
         if not husband_name or not husband_employer:
             return application_validation_redirect("missing_husband_field", 1)
 
-    # Prefer the form's documented DD/MM/YYYY format while retaining
-    # compatibility with previously accepted MM/DD/YYYY input.
-    dob = parse_date_of_birth(dob_raw)
     if dob is None:
         return application_validation_redirect("invalid_date_of_birth", 1)
 
