@@ -211,16 +211,22 @@ def redact_mobile(mobile):
     return "***" + mobile[-2:]
 
 
+
 RESET_TOKEN_VALIDITY_SECONDS = 300
 RESET_MAX_ATTEMPTS = 5
 RESET_COOLDOWN_SECONDS = 60
 RESET_WINDOW_SECONDS = 900
 RESET_MAX_REQUESTS_PER_MOBILE = 3
 RESET_MAX_REQUESTS_PER_IP = 10
-RESET_CODE_PEPPER = os.environ["SEWASETU_RESET_CODE_PEPPER"].encode("utf-8")
-REDIS_URL = os.environ["SEWASETU_REDIS_URL"]
-if not REDIS_URL.strip():
-    raise RuntimeError("SEWASETU_REDIS_URL must not be empty")
+
+RESET_CODE_PEPPER = os.environ[
+    "SEWASETU_RESET_CODE_PEPPER"
+].encode("utf-8")
+
+REDIS_URL = os.environ.get("SEWASETU_REDIS_URL", "").strip()
+if not REDIS_URL:
+    raise RuntimeError("SEWASETU_REDIS_URL must be configured")
+
 try:
     import redis
 except ImportError as exc:
@@ -228,7 +234,7 @@ except ImportError as exc:
 
 
 class RateLimiterUnavailable(Exception):
-    pass
+    """Raised when the Redis-backed reset rate limiter is unavailable."""
 
 
 class ResetRateLimiter:
@@ -238,11 +244,13 @@ class ResetRateLimiter:
             return 0
         end
     end
+
     for index, key in ipairs(KEYS) do
         local count = redis.call('INCR', key .. ':count')
         if count == 1 then
             redis.call('EXPIRE', key .. ':count', ARGV[1])
         end
+
         if count > tonumber(ARGV[index + 2]) then
             for rollback = 1, index do
                 redis.call('DECR', KEYS[rollback] .. ':count')
@@ -250,9 +258,11 @@ class ResetRateLimiter:
             return 0
         end
     end
+
     for _, key in ipairs(KEYS) do
         redis.call('SET', key .. ':cooldown', '1', 'EX', ARGV[2])
     end
+
     return 1
     """
 
@@ -261,55 +271,67 @@ class ResetRateLimiter:
 
     @staticmethod
     def _key(kind, value):
-        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(
+            value.encode("utf-8")
+        ).hexdigest()
         return "sewasetu:reset:%s:%s" % (kind, digest)
 
-    def request_allowed(self, mobile, ip_address):
+    def _run_redis(self, operation, *args):
         try:
-            result = self.client.eval(
-                self._REQUEST_SCRIPT,
-                2,
-                self._key("mobile", mobile),
-                self._key("ip", ip_address),
-                RESET_WINDOW_SECONDS,
-                RESET_COOLDOWN_SECONDS,
-                RESET_MAX_REQUESTS_PER_MOBILE,
-                RESET_MAX_REQUESTS_PER_IP,
-            )
+            return operation(*args)
         except redis.RedisError as exc:
+            # Never log Redis URLs, credentials, OTPs, or passwords.
             app.logger.error(
-                "redis rate limiter unavailable type=%s",
+                "redis rate limiter unavailable operation=%s type=%s",
+                operation.__name__,
                 type(exc).__name__,
             )
             raise RateLimiterUnavailable from exc
+
+    def check_connection(self):
+        return self._run_redis(self.client.ping)
+
+    def request_allowed(self, mobile, ip_address):
+        result = self._run_redis(
+            self.client.eval,
+            self._REQUEST_SCRIPT,
+            2,
+            self._key("mobile", mobile),
+            self._key("ip", ip_address),
+            RESET_WINDOW_SECONDS,
+            RESET_COOLDOWN_SECONDS,
+            RESET_MAX_REQUESTS_PER_MOBILE,
+            RESET_MAX_REQUESTS_PER_IP,
+        )
         return bool(result)
 
     def attempt_allowed(self, mobile):
         key = self._key("attempt", mobile) + ":count"
-        try:
-            count = self.client.incr(key)
-            if count == 1:
-                self.client.expire(key, RESET_TOKEN_VALIDITY_SECONDS)
-        except redis.RedisError as exc:
-            app.logger.error(
-                "redis rate limiter unavailable type=%s",
-                type(exc).__name__,
+
+        count = self._run_redis(self.client.incr, key)
+        if count == 1:
+            self._run_redis(
+                self.client.expire,
+                key,
+                RESET_TOKEN_VALIDITY_SECONDS,
             )
-            raise RateLimiterUnavailable from exc
+
         return count <= RESET_MAX_ATTEMPTS
 
     def clear_attempts(self, mobile):
-        try:
-            self.client.delete(self._key("attempt", mobile) + ":count")
-        except redis.RedisError as exc:
-            app.logger.error(
-                "redis rate limiter unavailable type=%s",
-                type(exc).__name__,
-            )
-            raise RateLimiterUnavailable from exc
+        key = self._key("attempt", mobile) + ":count"
+        self._run_redis(self.client.delete, key)
 
 
-reset_rate_limiter = ResetRateLimiter(redis.Redis.from_url(REDIS_URL))
+redis_client = redis.Redis.from_url(
+    REDIS_URL,
+    socket_connect_timeout=5,
+    socket_timeout=5,
+    health_check_interval=30,
+    decode_responses=True,
+)
+
+reset_rate_limiter = ResetRateLimiter(redis_client)
 
 
 def hash_password(password):
