@@ -885,9 +885,10 @@ def handle_submission():
 
 def generate_acknowledgment(cur, app_id):
     cur.execute(
-        "SELECT %s FROM applications WHERE id = %%s"
-        % APPLICATION_SUMMARY_COLUMNS,
-        (app_id,)
+        "SELECT application_no, applicant_name, mobile, dob, village, block, "
+        "bank_account, ifsc, submitted_at, status, decided_at "
+        "FROM applications WHERE id = %s",
+        (app_id,),
     )
     row = cur.fetchone()
     if not row:
@@ -920,6 +921,8 @@ def generate_acknowledgment(cur, app_id):
     ]
 
     for label, value in zip(labels, row):
+        if label == "Status" and value is None:
+            value = "Pending"
         if label == "Decided At" and value is None:
             value = "Pending"
         pdf.set_font("Helvetica", size=10)

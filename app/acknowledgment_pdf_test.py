@@ -143,6 +143,10 @@ class AcknowledgmentPdfTests(unittest.TestCase):
             self.assertIn(str(value), text)
         self.assertIn("Decided At", text)
         self.assertIn("Pending", text)
+        self.assertIn("Applicant Name", text)
+        self.assertIn("Test Village", text)
+        self.assertIn("Sonari", text)
+        self.assertIn("PENDING", text)
 
     def test_generator_renders_null_fields_without_losing_other_values(self):
         row = (
@@ -176,6 +180,9 @@ class AcknowledgmentPdfTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertNotEqual(path.read_bytes(), b"stale")
             self.assertIn(b"Test Applicant", response.data)
+            self.assertIn(b"Test Village", response.data)
+            self.assertIn(b"Sonari", response.data)
+            self.assertIn(b"PENDING", response.data)
             self.assertTrue(connection.closed)
 
     def test_ack_route_preserves_authorization(self):
@@ -271,7 +278,10 @@ class AcknowledgmentPdfTests(unittest.TestCase):
             "APPLICATION_SUMMARY_COLUMNS",
             source,
         )
-        self.assertIn("SELECT %s FROM applications WHERE id = %%s", source)
+        self.assertIn(
+            "SELECT application_no, applicant_name, mobile, dob, village, block,",
+            source,
+        )
 
 
 if __name__ == "__main__":
