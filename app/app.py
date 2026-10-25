@@ -1314,6 +1314,40 @@ def export_to_excel(rows):
     return out.getvalue()
 
 
+@app.route("/__gateway/", defaults={"subpath": ""})
+@app.route("/__gateway/<path:subpath>")
+def gateway_proxy(subpath):
+    """Proxy the simulated SMS gateway through the main website."""
+    token = os.environ.get("SEWASETU_SMS_GATEWAY_TOKEN", "")
+
+    if not token:
+        app.logger.error("Gateway proxy unavailable: token not configured")
+        return "SMS gateway is not configured", 503
+
+    # Prevent access to internal API endpoints through the browser proxy.
+    # The console at / is the intended demo interface.
+    if subpath not in ("",):
+        abort(404)
+
+    try:
+        response = requests.get(
+            SMS_GATEWAY_URL.rstrip("/") + "/",
+            headers={"X-Gateway-Token": token},
+            timeout=10,
+        )
+
+        return (
+            response.content,
+            response.status_code,
+            {"Content-Type": response.headers.get(
+                "Content-Type", "text/html"
+            )},
+        )
+    except requests.RequestException:
+        app.logger.exception("SMS gateway console proxy failed")
+        return "SMS gateway is temporarily unavailable", 502
+
+
 def old_payment_gateway_callback(txn):
     # retained for reference; eChallan integration was descoped in Phase 2
     status = txn.get("STATUS")
