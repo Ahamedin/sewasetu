@@ -142,6 +142,7 @@ class AcknowledgmentPdfTests(unittest.TestCase):
         for value in row[:-1]:
             self.assertIn(str(value), text)
         self.assertIn("Decided At", text)
+        self.assertIn("Pending", text)
 
     def test_generator_renders_null_fields_without_losing_other_values(self):
         row = (
@@ -185,6 +186,84 @@ class AcknowledgmentPdfTests(unittest.TestCase):
         ):
             response = client.get("/ack/1.pdf")
         self.assertEqual(response.status_code, 403)
+
+    def test_same_submission_session_can_open_only_its_acknowledgment(self):
+        row = (
+            "SSP26453142", "Test Applicant", "9000000000",
+            "1950-10-23", "Test Village", "Sonari", "123456",
+            "TEST0001", "2026-10-23 10:00", "PENDING", None,
+        )
+        connection = Connection([("9000000000",), row])
+        with patch.object(self.module, "get_db", return_value=connection):
+            client = self.module.app.test_client()
+            with client.session_transaction() as session:
+                session["ack_app_id"] = 1
+            response = client.get("/ack/1.pdf")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Pending", response.data)
+
+    def test_same_submission_session_cannot_open_another_application(self):
+        client = self.module.app.test_client()
+        with client.session_transaction() as session:
+            session["ack_app_id"] = 1
+        with patch.object(
+            self.module, "get_db",
+            side_effect=AssertionError("wrong application must be denied first"),
+        ):
+            response = client.get("/ack/2.pdf")
+        self.assertEqual(response.status_code, 403)
+
+    def test_same_submission_session_missing_application_returns_404(self):
+        connection = Connection([None])
+        with patch.object(self.module, "get_db", return_value=connection):
+            client = self.module.app.test_client()
+            with client.session_transaction() as session:
+                session["ack_app_id"] = 1
+            response = client.get("/ack/1.pdf")
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(connection.closed)
+
+    def test_logged_in_owner_can_open_pdf_but_other_owner_cannot(self):
+        row = (
+            "SSP26453142", "Test Applicant", "9000000000",
+            "1950-10-23", "Test Village", "Sonari", "123456",
+            "TEST0001", "2026-10-23 10:00", "PENDING", None,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            connection = Connection([("9000000000",), row])
+            with patch.object(self.module, "get_db", return_value=connection), \
+                    patch.object(self.module, "UPLOAD_DIR", directory):
+                client = self.module.app.test_client()
+                with client.session_transaction() as session:
+                    session["logged_in"] = True
+                    session["portal_mobile"] = "9000000000"
+                response = client.get("/ack/1.pdf")
+        self.assertEqual(response.status_code, 200)
+
+        connection = Connection([("9000000000",), row])
+        with patch.object(self.module, "get_db", return_value=connection):
+            client = self.module.app.test_client()
+            with client.session_transaction() as session:
+                session["logged_in"] = True
+                session["portal_mobile"] = "other-mobile"
+            response = client.get("/ack/1.pdf")
+        self.assertEqual(response.status_code, 404)
+
+    def test_same_submission_marker_is_retained_for_refresh(self):
+        row = (
+            "SSP26453142", "Test Applicant", "9000000000",
+            "1950-10-23", "Test Village", "Sonari", "123456",
+            "TEST0001", "2026-10-23 10:00", "PENDING", None,
+        )
+        connection = Connection([("9000000000",), row])
+        with patch.object(self.module, "get_db", return_value=connection):
+            client = self.module.app.test_client()
+            with client.session_transaction() as session:
+                session["ack_app_id"] = 1
+            response = client.get("/ack/1.pdf")
+        self.assertEqual(response.status_code, 200)
+        with client.session_transaction() as session:
+            self.assertEqual(session["ack_app_id"], 1)
 
     def test_status_and_pdf_use_the_same_summary_column_order(self):
         source = APP_PATH.read_text(encoding="utf-8-sig")

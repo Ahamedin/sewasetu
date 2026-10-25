@@ -871,6 +871,9 @@ def handle_submission():
     session.pop("form_data", None)
     session.pop("doc_path", None)
     session.pop("verified_mobile", None)
+    # Retain this signed, session-bound marker so the confirmation link can
+    # be refreshed or reopened without making acknowledgment PDFs public.
+    session["ack_app_id"] = new_id
     send_sms(
         mobile,
         "Sewa Setu: application %s received. Temporary status password: %s"
@@ -917,6 +920,8 @@ def generate_acknowledgment(cur, app_id):
     ]
 
     for label, value in zip(labels, row):
+        if label == "Decided At" and value is None:
+            value = "Pending"
         pdf.set_font("Helvetica", size=10)
         pdf.cell(55, 8, label, border=1)
         pdf.set_font("NotoBengali", size=10)
@@ -1012,10 +1017,13 @@ def view_application(app_id):
 
 @app.route("/ack/<int:app_id>.pdf")
 def ack_pdf(app_id):
-    # Require an authenticated portal user or administrator.
-    if not session.get("logged_in") and not session.get("admin"):
+    # Do not clear this marker here: browser refreshes and reopened
+    # confirmation links must continue to work during the active session.
+    same_submission = session.get("ack_app_id") == app_id
+    authenticated = session.get("logged_in") or session.get("admin")
+    if not authenticated and not same_submission:
         app.logger.warning(
-            "ACK PDF denied: app_id=%s reason=not_authenticated",
+            "ACK PDF denied: app_id=%s reason=not_authenticated_or_same_submission",
             app_id,
         )
         abort(403)
@@ -1045,8 +1053,9 @@ def ack_pdf(app_id):
                 )
                 abort(404)
 
-            # Verify that the logged-in user owns this application.
-            if not session.get("admin"):
+            # Verify ownership for logged-in portal users. A same-session
+            # post-submission request is bound to this exact application ID.
+            if authenticated and not session.get("admin"):
                 portal_mobile = session.get("portal_mobile")
 
                 app.logger.info(
@@ -1099,35 +1108,6 @@ def ack_pdf(app_id):
         )
         raise
 
-    finally:
-        conn.close()
-
-    if not session.get("logged_in") and not session.get("admin"):
-        abort(403)
-
-    # Verify the application exists and belongs to this user before serving a PDF.
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT mobile FROM applications WHERE id = %s",
-                (app_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                abort(404)
-            if (not session.get("admin") and
-                    row[0] != session.get("portal_mobile")):
-                abort(404)
-            data = generate_acknowledgment(cur, app_id)
-
-        pdf_path = os.path.join(UPLOAD_DIR, "ack", "%d.pdf" % app_id)
-        os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
-        temporary_path = pdf_path + ".tmp"
-        with open(temporary_path, "wb") as out:
-            out.write(data)
-        os.replace(temporary_path, pdf_path)
-        return send_file(io.BytesIO(data), mimetype="application/pdf")
     finally:
         conn.close()
 
