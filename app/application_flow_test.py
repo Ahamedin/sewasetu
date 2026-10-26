@@ -277,6 +277,8 @@ class ApplicationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Application Submitted", response.data)
         self.assertEqual(connection.commit_count, 1)
+        with self.client.session_transaction() as session:
+            self.assertEqual(session["ack_app_id"], 101)
 
     def test_missing_document_returns_to_upload_step(self):
         with self.client.session_transaction() as session:

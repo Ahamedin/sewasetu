@@ -482,6 +482,13 @@ def send_sms(mobile, text):
             timeout=15,
         )
         app.logger.info("SMS gateway HTTP status: %s", response.status_code)
+        if response.status_code == 429:
+            retry_after = response.headers.get("Retry-After", "")
+            app.logger.warning(
+                "SMS gateway rate limit reached retry_after_present=%s",
+                bool(retry_after),
+            )
+            return
         response.raise_for_status()
     except requests.exceptions.RequestException as exc:
         app.logger.error(
@@ -891,6 +898,17 @@ def generate_acknowledgment(cur, app_id):
         (app_id,),
     )
     row = cur.fetchone()
+    if row:
+    app.logger.info(
+        "ACK field presence app_id=%s fields=%s",
+        app_id,
+        {
+            "applicant_name": bool(row[1]),
+            "village": bool(row[4]),
+            "block": bool(row[5]),
+            "status": bool(row[9]),
+        },
+    )
     if not row:
         raise ValueError("Application not found")
 
@@ -920,11 +938,17 @@ def generate_acknowledgment(cur, app_id):
         "Decided At",
     ]
 
+
+    if len(row) != len(labels):
+        raise ValueError(
+            "Acknowledgment field mismatch: "
+            f"expected {len(labels)} values, got {len(row)}"
+        )
+
     for label, value in zip(labels, row):
-        if label == "Status" and value is None:
+        if label in ("Status", "Decided At") and value is None:
             value = "Pending"
-        if label == "Decided At" and value is None:
-            value = "Pending"
+
         pdf.set_font("Helvetica", size=10)
         pdf.cell(55, 8, label, border=1)
         pdf.set_font("NotoBengali", size=10)
@@ -932,6 +956,7 @@ def generate_acknowledgment(cur, app_id):
             0, 8, str(value if value is not None else ""), border=1,
             new_x="LMARGIN", new_y="NEXT"
         )
+
 
     pdf.ln(6)
     pdf.set_font("Helvetica", size=9)
