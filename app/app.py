@@ -966,7 +966,7 @@ def generate_acknowledgment(cur, app_id):
 
         pdf.set_font("Helvetica", size=10)
         pdf.cell(55, 8, label, border=1)
-        pdf.set_font("NotoBengali", size=10)
+        pdf.set_font("Helvetica", size=10)
         pdf.multi_cell(
             0, 8,
             str(value if value is not None else ""),
