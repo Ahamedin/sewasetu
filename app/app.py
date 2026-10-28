@@ -890,6 +890,7 @@ def handle_submission():
 
 
 
+
 def generate_acknowledgment(cur, app_id):
     cur.execute(
         "SELECT application_no, applicant_name, mobile, dob, village, block, "
@@ -898,7 +899,11 @@ def generate_acknowledgment(cur, app_id):
         (app_id,),
     )
     row = cur.fetchone()
-    if row:
+
+    if not row:
+        raise ValueError("Application not found")
+
+    # Log field presence only; never log personal values.
     app.logger.info(
         "ACK field presence app_id=%s fields=%s",
         app_id,
@@ -909,8 +914,6 @@ def generate_acknowledgment(cur, app_id):
             "status": bool(row[9]),
         },
     )
-    if not row:
-        raise ValueError("Application not found")
 
     font_path = os.path.join(BASE_DIR, "fonts", "NotoSansBengali.ttf")
     if not os.path.isfile(font_path):
@@ -922,22 +925,27 @@ def generate_acknowledgment(cur, app_id):
     pdf.add_font("NotoBengali", fname=font_path)
 
     pdf.set_font("NotoBengali", size=14)
-    pdf.cell(0, 10, "GOVERNMENT OF PURVANCHAL",
-             new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(
+        0, 10, "GOVERNMENT OF PURVANCHAL",
+        new_x="LMARGIN", new_y="NEXT", align="C",
+    )
 
     pdf.set_font("NotoBengali", size=11)
-    pdf.cell(0, 8, "Department of Social Welfare",
-             new_x="LMARGIN", new_y="NEXT", align="C")
-    pdf.cell(0, 8, "Old Age Pension Scheme - Acknowledgment",
-             new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(
+        0, 8, "Department of Social Welfare",
+        new_x="LMARGIN", new_y="NEXT", align="C",
+    )
+    pdf.cell(
+        0, 8, "Old Age Pension Scheme - Acknowledgment",
+        new_x="LMARGIN", new_y="NEXT", align="C",
+    )
     pdf.ln(4)
 
     labels = [
         "Application No", "Applicant Name", "Mobile", "Date of Birth",
-        "Village", "Block", "Bank Account", "IFSC", "Submitted At", "Status",
-        "Decided At",
+        "Village", "Block", "Bank Account", "IFSC", "Submitted At",
+        "Status", "Decided At",
     ]
-
 
     if len(row) != len(labels):
         raise ValueError(
@@ -953,17 +961,19 @@ def generate_acknowledgment(cur, app_id):
         pdf.cell(55, 8, label, border=1)
         pdf.set_font("NotoBengali", size=10)
         pdf.multi_cell(
-            0, 8, str(value if value is not None else ""), border=1,
-            new_x="LMARGIN", new_y="NEXT"
+            0, 8,
+            str(value if value is not None else ""),
+            border=1,
+            new_x="LMARGIN",
+            new_y="NEXT",
         )
-
 
     pdf.ln(6)
     pdf.set_font("Helvetica", size=9)
     pdf.multi_cell(
         0, 5,
         "This is a computer generated acknowledgment. Processing SLA "
-        "as per the Purvanchal Right to Public Services Act applies."
+        "as per the Purvanchal Right to Public Services Act applies.",
     )
 
     return bytes(pdf.output())
