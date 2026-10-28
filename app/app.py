@@ -905,13 +905,20 @@ def generate_acknowledgment(cur, app_id):
 
     # Log field presence only; never log personal values.
     app.logger.info(
-        "ACK field presence app_id=%s fields=%s",
+        "ACK field diagnostics app_id=%s fields=%s",
         app_id,
         {
+            "application_no": bool(row[0]),
             "applicant_name": bool(row[1]),
+            "mobile": bool(row[2]),
+            "dob": bool(row[3]),
             "village": bool(row[4]),
             "block": bool(row[5]),
+            "bank_account": bool(row[6]),
+            "ifsc": bool(row[7]),
+            "submitted_at": bool(row[8]),
             "status": bool(row[9]),
+            "decided_at": bool(row[10]),
         },
     )
 
